@@ -3,7 +3,9 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.Console;
 import java.util.Arrays;
-import java.util.Base64;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
+import com.github.obsproth.obspassword.common.reductor.ReductorFactory;
 import com.github.obsproth.obspassword.HashUtil;
 import com.github.obsproth.obspassword.ServiceElement;
 
@@ -161,6 +163,13 @@ public class ObsPassword{
         System.out.println(String.format("Added Service %s; length:%d, Hash:%s...", name, length, hash));
         tbl.save(DATA_FILE);
     }
+    // パスワードを出力する
+    //
+    //
+    private static void outputPassword(char[] passwordChars) {
+        System.out.println("Password generated into Clipboard");
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(String.valueOf(passwordChars)), null);
+    }
     // パスワードの生成部分 フローがあってるか怪しい
     // 
     //
@@ -197,8 +206,15 @@ public class ObsPassword{
         if(hash == null) {
             return;
         }
-        String passwordStr = Base64.getEncoder().encodeToString(hash).substring(0, elem.getLength());
-        System.out.println(passwordStr);
+        char[] passwordChars = null;
+        try {
+            passwordChars = ReductorFactory.getMixer(ReductorFactory.BASE64)
+                .generate(hash, elem.getLength());
+            outputPassword(passwordChars);
+        } finally {
+            Arrays.fill(hash, (byte)0x00);
+            if (passwordChars != null) { Arrays.fill(passwordChars, '\n'); }
+        }
     }
 
     public static void parseArguments(String [] args) {
