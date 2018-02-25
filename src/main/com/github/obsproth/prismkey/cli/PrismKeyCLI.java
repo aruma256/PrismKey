@@ -1,11 +1,13 @@
-package com.github.obsproth.obspassword.cli;
+package com.github.obsproth.prismkey.cli;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.Console;
 import java.util.Arrays;
-import java.util.Base64;
-import com.github.obsproth.obspassword.HashUtil;
-import com.github.obsproth.obspassword.ServiceElement;
+import java.util.List;
+import java.util.ArrayList;
+import com.github.obsproth.prismkey.common.generator.*;
+import com.github.obsproth.prismkey.HashUtil;
+import com.github.obsproth.prismkey.ServiceElement;
 
 class PasswordMismatch extends RuntimeException {
     public PasswordMismatch() {
@@ -13,7 +15,62 @@ class PasswordMismatch extends RuntimeException {
     }
 }
 
-public class ObsPassword{
+class CLIAddConfig {
+    public String name;
+    public String lengthStr;
+    public String allowSmallsStr = "False";
+    public String allowCapsStr = "False";
+    public String allowNumbersStr = "False";
+    public String symbols = GeneratorV2.DEFAULT_SYMBOLS;
+    public CLIAddConfig() {
+        name = null;
+        lengthStr = null;
+    }
+    public String getRecipeStr() {
+        List<String> seedSet = new ArrayList<String>();
+        if (allowSmallsStr.equals("True")) {
+            seedSet.add("a-z");
+        }
+        if (allowCapsStr.equals("True")) {
+            seedSet.add("A-Z");
+        }
+        if (allowNumbersStr.equals("True")) {
+            seedSet.add("0-9");
+        }
+        seedSet.add(symbols);
+        return "["+String.join("", seedSet)+"]";
+    }
+    public static CLIAddConfig fromArgument(String[] args, int startPosition) {
+        CLIAddConfig config = new CLIAddConfig();
+        config.name = args[startPosition];
+        for(int j = startPosition + 1; j < args.length; j++) {
+            if(args[j].equals("--allow-numbers")) {
+                config.allowNumbersStr = "True";
+            } else if(args[j].equals("--allow-caps")) {
+                config.allowCapsStr = "True";
+            } else if (args[j].equals("--allow-smalls")) {
+                config.allowSmallsStr = "True";
+            } else if (args[j].equals("--allow-alnums")) {
+                config.allowNumbersStr = "True";
+                config.allowSmallsStr = "True";
+                config.allowCapsStr = "True";             
+            } else if (args[j].equals("--symbols")) {
+                config.symbols = args[j+1];
+                j++;
+            } else {
+                config.lengthStr = args[j];    
+            }
+        }
+        if (config.allowSmallsStr.equals("False") && config.allowCapsStr.equals("False") && config.allowNumbersStr.equals("False")) {
+            config.allowNumbersStr = "True";
+            config.allowSmallsStr = "True";
+            config.allowCapsStr = "True";             
+        }
+        return config;
+    }
+}
+
+public class PrismKeyCLI {
     
     public static String DATA_FILE = "data.csv";
     static int PASSWD_MAX_PROMPT = 3;
@@ -53,13 +110,13 @@ public class ObsPassword{
     }
     // 
     // DESCRIPTION:
-    //     show usage for ObsPassword CLI
+    //     show usage for PrismKey CLI
     public static void showUsage() {
         System.out.println("-- Usage --");
         System.out.println();
-        System.out.println("\tjava -jar obspassword list\tshow available services");
-        System.out.println("\tjava -jar obspassword generate servicename\tgenerate password");
-        System.out.println("\tjava -jar obspassword add [servicename] [length]\tadd password to service");
+        System.out.println("\tjava -jar prismkey list\tshow available services");
+        System.out.println("\tjava -jar prismkey generate servicename\tgenerate password");
+        System.out.println("\tjava -jar prismkey add [servicename] [length]\tadd password to service");
         System.out.println();
         System.out.println("*--- (not Implemented) ---");
         System.out.println("\t<remove>\tdelete data from service");
@@ -67,7 +124,7 @@ public class ObsPassword{
     //
     // input password manager contains retry
     //
-    private static char[] passwordPrompt(String caption, ServiceElement elem) {
+    private static char[] passwordPrompt(String caption, AbstractGenerator generator, ServiceElement elem) {
         java.io.Console cons = System.console();
         char[] password = null;
         for (int j = 0; j < PASSWD_MAX_PROMPT; j++){
@@ -75,7 +132,7 @@ public class ObsPassword{
             if (password == null) {
                 return null;
             }
-            if (elem.getBaseHash().equals(HashUtil.getBaseHashStr(password, false))) {
+            if (generator.verifySeed(password, elem)) {
                 return password;
             }
             for(int i = 0; i < password.length; i++) {
@@ -88,7 +145,7 @@ public class ObsPassword{
         return null;
     }
 
-    private static String getBaseHashFromInputPassword(Console cons) {
+    private static String getBaseHashFromInputPassword(Console cons, List<String> config)  {
         char[] password1 = null, password2 = null;
         String baseHash = null;
         passwordCheck: while(baseHash == null){
@@ -98,7 +155,7 @@ public class ObsPassword{
                 if (!Arrays.equals(password1, password2)) {
                     throw new PasswordMismatch();
                 }
-                baseHash = HashUtil.getBaseHashStr(password1);
+                baseHash = GeneratorFactory.getLatestGenerator(config).getSeedDigestStr(password1);
             } catch (PasswordMismatch e) {
                 System.out.println("Password mismatched! try again.");
                 continue passwordCheck;
@@ -114,7 +171,7 @@ public class ObsPassword{
         return baseHash;
     }
 
-    public static void doAdd(String name, String lengthStr) {
+    public static void doAdd(CLIAddConfig confArg) {
         ServiceTable tbl = null;
         try{
             tbl = new ServiceTable(DATA_FILE);
@@ -123,20 +180,21 @@ public class ObsPassword{
             System.exit(-1);
         }
         Console cons = System.console();
-        String serviceName = name;
+        String serviceName = confArg.name;
         // サービス名は予めコマンドライン引数で決めておくか、実行時に入力
         if (serviceName == null) {
             serviceName = cons.readLine("Enter ServiceName:");
         }
         int length = 16;
-        if (lengthStr != null) {
+        if (confArg.lengthStr != null) {
             try{
-                length = Integer.parseInt(lengthStr);
+                length = Integer.parseInt(confArg.lengthStr);
             } catch (NumberFormatException e) {
                 System.out.println("length must be decimal values");
                 return;
             }
         }
+        String lengthStr = confArg.lengthStr;
         lengthPrompt: while(lengthStr == null) {
             try{
                 lengthStr = cons.readLine("Enter Length(default 16):");
@@ -152,13 +210,22 @@ public class ObsPassword{
                 continue lengthPrompt;
             }
         }
+        // 生成設定を表示する
+        int algoVersion = com.github.obsproth.prismkey.PrismKey.ALGO_VERSION;
+        System.out.println(String.format("Name: %s, Length: %d, Version: %d, Recipe: %s", serviceName, length, algoVersion, confArg.getRecipeStr()));
+        // password生成設定
+        List<String> config = new ArrayList<String>();
+        config.add(confArg.allowNumbersStr);
+        config.add(confArg.allowCapsStr);
+        config.add(confArg.allowSmallsStr);
+        config.add(confArg.symbols);
         // passwordを入力してbaseHashを取得
-        String hash = getBaseHashFromInputPassword(cons);
+        String hash = getBaseHashFromInputPassword(cons, config);
         if (hash == null) {
             return;
         }
-        tbl.add(name, length, hash);
-        System.out.println(String.format("Added Service %s; length:%d, Hash:%s...", name, length, hash));
+        tbl.add(serviceName, length, hash, algoVersion, config);
+        System.out.println(String.format("Added Service %s; length:%d, Hash:%s...", serviceName, length, hash));
         tbl.save(DATA_FILE);
     }
     // パスワードの生成部分 フローがあってるか怪しい
@@ -177,28 +244,21 @@ public class ObsPassword{
             System.out.println(String.format("service %s was not found", name));
             return;
         }
-        byte[] hash = null;
-        char[] password = new char[1];
+        char[] seedPassword = null;
+        char[] password = null;
+        AbstractGenerator generator = GeneratorFactory.getGenerator(elem); 
         try {
             // passwordを入力するプロンプト（3回まで可）
-            password = passwordPrompt("input master password :", elem);
-            if (password != null) {
-                hash = HashUtil.calcHash(password, elem.getServiceName(), elem.getLength());
+            System.out.println(generator.getClass().getName());
+            seedPassword = passwordPrompt("input master password :", generator, elem);
+            if(seedPassword != null) {
+                password = generator.generate(seedPassword, elem);
+                System.out.println(password);
             }
         } finally {
-            if (password == null) {
-                return;
-            }
-            // passwordPromptでpasswordが出た時の消去
-            for(int i = 0; i < password.length; i++) {
-                password[i] = '\n';
-            }
+            if (seedPassword != null) { Arrays.fill(seedPassword, '\n'); }
+            if (password != null) { Arrays.fill(password, '\n'); }            
         }
-        if(hash == null) {
-            return;
-        }
-        String passwordStr = Base64.getEncoder().encodeToString(hash).substring(0, elem.getLength());
-        System.out.println(passwordStr);
     }
 
     public static void parseArguments(String [] args) {
@@ -214,13 +274,8 @@ public class ObsPassword{
                     showUsage();
                 }
             } else if(operation.equals("add")) {
-                if (args.length > 2) {
-                    doAdd(args[1], args[2]);
-                } else if (args.length > 1){
-                    doAdd(args[1], null);
-                } else {
-                    doAdd(null, null);
-                }
+                CLIAddConfig confArg = CLIAddConfig.fromArgument(args, 1);
+                doAdd(confArg);
             } else {
                 showUsage();
             }
