@@ -1,1 +1,1 @@
-# ObsPassword
+# PrismKey
